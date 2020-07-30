@@ -1,0 +1,262 @@
+---
+title: "Music Clustering from Spotify"
+subtitle : "Based on Components and Popularity"
+author: "Atika Dewi Suryani"
+date: "`r format(Sys.Date(), '%B %e, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_float: 
+      collapsed: no
+    number_sections: true
+    df_print: paged
+    theme: cosmo
+    highlight: tango
+    css: assets/inclass_style.css
+---
+
+# Intro - What we will do ? {.tabset}
+We will try to do a clustering analysis  **music bank data from Spotify basedn on the component and popularity** using K-means method. We will also see if we can do a dimensionality reduction using the Principle Components Analysis (PCA).
+
+## Datasets
+The datasets is acquired through [Kaggle](https://www.kaggle.com/zaheenhamidani/ultimate-spotify-tracks-db).
+
+## Library and Setup
+We'll set-up caching for this notebook given how computationally expensive some of the code we will write can get.
+
+```{r setup, include=FALSE}
+# chunk options
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  comment = "#>"
+)
+
+library(tidyverse)
+library(lubridate)
+library(cluster)
+library(factoextra)
+library(ggforce)
+library(GGally)
+library(scales)
+library(cowplot)
+library(FactoMineR)
+library(factoextra)
+library(plotly)
+library(dplyr)
+library(radarchart)
+library(tidyr)
+library(fmsb)
+library(mlbench)
+library(caret)
+library(lattice)
+options(scipen = 9999)
+```
+
+```yaml
+library(tidyverse)
+library(lubridate)
+library(cluster)
+library(factoextra)
+library(ggforce)
+library(GGally)
+library(scales)
+library(cowplot)
+library(FactoMineR)
+library(factoextra)
+library(plotly)
+library(dplyr)
+library(radarchart)
+library(tidyr)
+library(fmsb)
+library(mlbench)
+library(caret)
+library(lattice)
+```
+
+
+## Import and Check Data
+Read data in .csv format
+```{r}
+spo <- read.csv("SpotifyFeatures copy.csv", stringsAsFactors = FALSE)
+```
+
+
+Check data type
+```{r}
+glimpse(spo)
+```
+
+Data still need to normalise
+
+**Variable Explanation**
+
+* **Genre** : Category of artistic composition, as in music or literature, characterized by similarities in form, style, or subject matter
+
+* **Artist_name** : Artist name
+
+* **Track_name** : Name of track
+
+* **Track_id** : Describes identical number of the track that used by the Spotify for identify the song based on random number
+
+* **Popularity** : Describes the track from-to 1-100 scale of popularity (low-high) based on most play by the user
+
+* **Danceability**: Describes how suitable a track is for dancing based on a combination of musical elements including tempo, rhythm stability, beat strength, and overall regularity. A value of 0.0 is least danceable and 1.0 is most danceable.
+
+* **Energy**: Is a measure from 0.0 to 1.0 and represents a perceptual measure of intensity and activity. Typically, energetic tracks feel fast, loud, and noisy. For example, death metal has high energy, while a Bach prelude scores low on the scale. Perceptual features contributing to this attribute include dynamic range, perceived loudness, timbre, onset rate, and general entropy.
+
+* **Key**: The key the track is in. Integers map to pitches using standard Pitch Class notation. E.g. 0 = C, 1 = C♯/D♭, 2 = D, and so on.
+
+* **Loudness**: The overall loudness of a track in decibels (dB). Loudness values are averaged across the entire track and are useful for comparing relative loudness of tracks. Loudness is the quality of a sound that is the primary psychological correlate of physical strength (amplitude). Values typical range between -60 and 0 db.
+
+* **Mode**: Mode indicates the modality (major or minor) of a track, the type of scale from which its melodic content is derived. Major is represented by 1 and minor is 0.
+
+* **Speechiness**: Speechiness detects the presence of spoken words in a track. The more exclusively speech-like the recording (e.g. talk show, audio book, poetry), the closer to 1.0 the attribute value. Values above 0.66 describe tracks that are probably made entirely of spoken words. Values between 0.33 and 0.66 describe tracks that may contain both music and speech, either in sections or layered, including such cases as rap music. Values below 0.33 most likely represent music and other non-speech-like tracks.
+
+* **Acousticness**: A confidence measure from 0.0 to 1.0 of whether the track is acoustic. 1.0 represents high confidence the track is acoustic.
+
+* **Instrumentalness**: Predicts whether a track contains no vocals. “Ooh” and “aah” sounds are treated as instrumental in this context. Rap or spoken word tracks are clearly “vocal”. The closer the instrumentalness value is to 1.0, the greater likelihood the track contains no vocal content. Values above 0.5 are intended to represent instrumental tracks, but confidence is higher as the value approaches 1.0.
+
+* **Liveness**: Detects the presence of an audience in the recording. Higher liveness values represent an increased probability that the track was performed live. A value above 0.8 provides strong likelihood that the track is live.
+
+* **Valence**: A measure from 0.0 to 1.0 describing the musical positiveness conveyed by a track. Tracks with high valence sound more positive (e.g. happy, cheerful, euphoric), while tracks with low valence sound more negative (e.g. sad, depressed, angry).
+
+* **Tempo**: The overall estimated tempo of a track in beats per minute (BPM). In musical terminology, tempo is the speed or pace of a given piece and derives directly from the average beat duration.
+
+* **Duration_ms**: The duration of the track in milliseconds.
+
+* **Popular** : Group based on the popular's rate
+
+## Data Preprocessing 
+check any NA data on the table
+```{r}
+colSums(is.na(spo))
+```
+
+No missing data
+
+We need new dataframe that **only** conclude as.numeric datas
+```{r}
+spotidy <-  spo %>% 
+select(c(acousticness, danceability, duration_ms, energy, instrumentalness, liveness, loudness, speechiness, tempo,valence))
+```
+
+Data has been normalise and ready to be process into further step
+
+We need new dataframe that that conclude 1 variable **factor** to be conclude in a popularity grouping
+```{r}
+spotidy1 <- spo %>%
+select(c(popular, acousticness, danceability, duration_ms, energy, instrumentalness, liveness, loudness, speechiness, tempo,valence))
+```
+
+Normalise data on spotidy
+```{r}
+# function
+normalize <- function(x) {
+return ((x - min(x)) / (max(x) - min(x)))
+}
+
+# save normalise element to new object
+spotidy$acousticness <- normalize(spotidy$acousticness)
+spotidy$danceability <- normalize(spotidy$danceability)
+spotidy$duration_ms <- normalize(spotidy$duration_ms)
+spotidy$energy <- normalize(spotidy$energy)
+spotidy$instrumentalness <- normalize(spotidy$instrumentalness)
+spotidy$liveness <- normalize(spotidy$liveness)
+spotidy$loudness <- normalize(spotidy$loudness)
+spotidy$speechiness <- normalize(spotidy$speechiness)
+spotidy$tempo <- normalize(spotidy$tempo)
+spotidy$valence <- normalize(spotidy$valence)
+
+# check summary of new object
+summary(spotidy)
+```
+
+Normalise data on spotidy1
+```{r}
+# save normalise element to new object
+spotidy1$acousticness <- normalize(spotidy1$acousticness)
+spotidy1$danceability <- normalize(spotidy1$danceability)
+spotidy1$duration_ms <- normalize(spotidy1$duration_ms)
+spotidy1$energy <- normalize(spotidy1$energy)
+spotidy1$instrumentalness <- normalize(spotidy1$instrumentalness)
+spotidy1$liveness <- normalize(spotidy1$liveness)
+spotidy1$loudness <- normalize(spotidy1$loudness)
+spotidy1$speechiness <- normalize(spotidy1$speechiness)
+spotidy1$tempo <- normalize(spotidy1$tempo)
+spotidy1$valence <- normalize(spotidy1$valence)
+
+# check summary of new object
+summary(spotidy1)
+```
+
+# Exploratory Data Analysis {.tabset}
+
+## Possibility for PCA
+
+We want to see if there is a high correlation between numeric variables. Strong correlation in some variables imply that we can reduce the dimensionality or number of features using the Principle Component Analysis (PCA).
+
+```{r}
+ggcorr(spotidy, low = "navy", high = "darkred")
+```
+
+There are some features that has high correlation such as the energy and loudness, valence and energy, tempo and energy, etc. Based on this result, we will try to reduce the dimension using PCA.
+
+# Clustering {.tabset}
+
+## Elbow Method
+Choosing the number of clusters using elbow method is arbitrary. The rule of thumb is we choose the number of cluster in the area of “bend of an elbow”, where the graph is total within sum of squares start to stagnate with the increase of the number of clusters.
+```{r}
+RNGkind(sample.kind = "Rounding")
+set.seed(50)
+spo_cluster <- kmeans(spotidy, 3)
+fviz_cluster(object = spo_cluster, data = spotidy, labelsize = 0) + theme_minimal()
+```
+
+Based on the we can spread the data into 3 clusters 
+
+```{r fig.height= 8.5, fig.width=14, warning=FALSE}
+spotidy %>%
+mutate(cluster = as.factor(spo_cluster$cluster)) %>%
+group_by(cluster) %>%
+summarise_all(mean) %>%
+pivot_longer(cols = -1, names_to = "type", values_to = "score") %>%
+ggplot(aes(x = cluster, y = score)) +
+geom_col(aes(fill = cluster)) +
+facet_wrap(~type)
+```
+
+The data has 3 cluster that has specific characteristic in each cluster
+
+* **Cluster 1** overall has the has the highest energy and danceability
+* **Cluster 2** overall has the highest energy and loudness
+* **Cluster 3** is the balanced group, but dominance from the `acousticness` side
+
+Cluster based on other popularity
+```{r fig.height= 8.5, fig.width=14}
+spotidy1 %>%
+mutate(cluster = as.factor(spotidy1$popular)) %>%
+group_by(cluster) %>%
+summarise_all(mean) %>%
+pivot_longer(cols = -1, names_to = "type", values_to = "score") %>%
+ggplot(aes(x = cluster, y = score)) +
+geom_col(aes(fill = cluster)) +
+facet_wrap(~type)
+```
+
+# PCA Principal component analysis 
+Statistical procedure that uses an orthogonal transformation to convert a set of observations of possibly correlated variables (entities each of which takes on various numerical values) into a set of values of linearly uncorrelated variables called principal components. 
+
+Visualise PCA
+```{r}
+spo_graph <- PCA(X = spotidy, scale.unit = F, graph = T, ncp = 10)
+```
+
+
+# Conclusion {.tabset}
+We can pull some conclusions regarding our dataset based on the previous cluster and principle component analysis:
+
+- We can separate our data into at least 3 clusters and the most variable that appeal from those 3 clusters is `loudness`
+
+- Based on Popularity we have 4 class, the `Familiar` and `Popular` share the same characteristic
